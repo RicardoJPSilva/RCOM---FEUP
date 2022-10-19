@@ -46,26 +46,36 @@ enum states{
     START,FLAG_RCV,A_RCV,C_RCV,BCC_OK,END
 };
 int state = START;
+
+int stuffedSize;
 //include the flags
 unsigned char* stuff(const unsigned char *buf, int size){
     unsigned char *stuffed = malloc(2*(size-2));
     stuffed[0] = FLAG;
-    int j = 1;
+    int stuffedSize = 1;
     for (int i = 1; i < size-1; ++i) {
         if(buf[i] == FLAG){
-            stuffed[j] = ESC;
-            stuffed[++j] = FLAG^XOR_ESC;
+            stuffed[stuffedSize] = ESC;
+            stuffed[++stuffedSize] = FLAG^XOR_ESC;
         }else if(buf[i] == ESC){
-            stuffed[j] = ESC;
-            stuffed[++j] = ESC^XOR_ESC;
+            stuffed[stuffedSize] = ESC;
+            stuffed[++stuffedSize] = ESC^XOR_ESC;
         }else{
-            stuffed[j]=buf[i];
+            stuffed[stuffedSize]=buf[i];
         }
-        j++;
+        stuffedSize++;
     }
-    stuffed[j] = FLAG;
+    stuffed[stuffedSize] = FLAG;
+    
+    stuffed = realloc(stuffed,stuffedSize+1);
 
     return stuffed;
+}
+
+unsigned char* destuff(const unsigned char *buf, int size){
+    
+
+
 }
 
 void receptor(){
@@ -79,6 +89,8 @@ void receptor(){
     for (int i = 0; i < bytes; ++i) {
         printf("%02X",buf[i]);
     }
+    
+    
     if(bytes > 0)printf(":%d\n",bytes);
 
     //interpreting the received bytes with a state machine
@@ -93,7 +105,7 @@ void receptor(){
             case FLAG_RCV:
                 if (buf[i] == A){
                     state = A_RCV;
-                }else{
+                else{
                     state = START;
                 }
                 break;
@@ -147,6 +159,7 @@ void emissor(){
     // read the payload
     unsigned char payload[] = {FLAG, A, SET, A ^ SET, FLAG};
 
+    //payload = stuff(payload,sizeof(payload)/sizeof(char));
     // printing the hexadecimal value of the payload
     for (int i = 0; i < sizeof(payload)/sizeof(char); ++i) {
         printf("%02X",payload[i]);
