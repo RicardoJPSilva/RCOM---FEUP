@@ -23,6 +23,8 @@
 #define ESC 0X7d
 #define XOR_ESC 0X20
 #define DISC 0X0B
+#define RR 0x05
+#define REJ 0x01
 
 #define numTransmissions 4
 #define TIMEOUT 3
@@ -301,10 +303,28 @@ void desconect(int fd){
     emissor(fd,ua);
 }
 
+void processData(int fd,struct array data,char c){
+    int xor = data.content[0];
+    for (int j = 1; j < data.size-1; ++j) {
+        xor ^= data.content[j];
+    }
+    if(xor == data.content[data.size-1]){
+        unsigned char a[] = {FLAG,A,c+RR,A^(c+RR),FLAG};
+
+        emissor(fd,(struct array){a,6});
+    }
+    else{
+        unsigned char a[] = {FLAG,A,c+REJ,A^(c+REJ)};
+        emissor(fd,(struct array){a,6});
+    }
+}
+
 void readData(int fd){
     struct array buf = receptor(fd);
     state = START;
-    int c;
+    unsigned char c;
+    unsigned char data[BUF_SIZE];
+    int dataSize = 0;
 
     for (int i = 0; i < buf.size; i++){
         switch (state){
@@ -348,9 +368,16 @@ void readData(int fd){
             case BCC_OK:
                 if (buf.content[i] == FLAG)
                 {
+                    processData(fd,(struct array){data,dataSize},c);
                     state = END;
                 }else{
-                    state = START;
+                    if(buf.content[i] == ESC){
+                        i++;
+                        data[dataSize] = XOR_ESC^buf.content[i];
+                    }else{
+                        data[dataSize] = buf.content[i];
+                    }
+                    dataSize++;
                 }
             case END:
                 STOP = TRUE;
@@ -375,6 +402,7 @@ void sendData(int fd, struct array data){
     for (int i = 1; i < data.size; ++i) {
         BCC2 = BCC2 ^ data.content[i];
     }
+
     const unsigned char footer[] = {BCC2, FLAG};
 
     unsigned char* payload = malloc((4+data.size+2)*sizeof(unsigned char));
