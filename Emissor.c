@@ -6,12 +6,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
-#include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
 #include <time.h>
-#include <wait.h>
 
 // Baudrate settings are defined in <asm/termbits.h>, which is
 // included by <termios.h>
@@ -25,15 +22,16 @@
 #define UA 0x07
 #define ESC 0X7d
 #define XOR_ESC 0X20
+#define DISC 0X0B
 
-#define RETRANSMITION_COUNT 4
+#define numTransmissions 4
+#define TIMEOUT 3
 
 #define FALSE 0
 #define TRUE 1
 
-int alarmEnabled = FALSE;
-int alarmCount = 0;
-int fd;
+char C = 0x00;
+
 
 struct termios oldtio;
 
@@ -47,73 +45,76 @@ enum states{
 };
 int state = START;
 
-int stuffedSize;
-//include the flags
-unsigned char* stuff(const unsigned char *buf, int size){
-    unsigned char *stuffed = malloc(2*(size-2));
-    stuffed[0] = FLAG;
-    int stuffedSize = 1;
-    for (int i = 1; i < size-1; ++i) {
-        if(buf[i] == FLAG){
+struct array{
+    unsigned char *content;
+    size_t size;
+};
+
+struct array stuff(struct array buf){
+    unsigned char *stuffed = malloc(2*(buf.size));
+
+    int stuffedSize = 0;
+    for (int i = 0; i < buf.size; ++i) {
+        if(buf.content[i] == FLAG){
             stuffed[stuffedSize] = ESC;
             stuffed[++stuffedSize] = FLAG^XOR_ESC;
-        }else if(buf[i] == ESC){
+        }else if(buf.content[i] == ESC){
             stuffed[stuffedSize] = ESC;
             stuffed[++stuffedSize] = ESC^XOR_ESC;
         }else{
-            stuffed[stuffedSize]=buf[i];
+            stuffed[stuffedSize]=buf.content[i];
         }
         stuffedSize++;
     }
-    stuffed[stuffedSize] = FLAG;
     
-    stuffed = realloc(stuffed,stuffedSize+1);
+    stuffed = realloc(stuffed,stuffedSize);
 
-    return stuffed;
+    struct array a = {stuffed,stuffedSize};
+
+    return a;
 }
 
-unsigned char* destuff(const unsigned char *buf, int size){
-    
+struct array destuff(struct array buf){
 
+    int destuffedSize = 0;
+    if(buf.size < 1)return buf;
 
-}
-
-void receptor(){
-
-    unsigned char buf[BUF_SIZE + 1] = {0}; // +1: Save space for the final '\0' char
-    // Returns after 5 chars have been input
-    int bytes = read(fd, buf, BUF_SIZE);
-    buf[bytes] = '\0'; // Set end of string to '\0', so we can printf
-
-    //printing the hexadecimal code received
-    for (int i = 0; i < bytes; ++i) {
-        printf("%02X",buf[i]);
+    for (int i = 0; i < buf.size; ++i) {
+        if(buf.content[i] == ESC){
+            i++;
+            buf.content[destuffedSize] = XOR_ESC^buf.content[i];
+        }
+        destuffedSize++;
     }
-    
-    
-    if(bytes > 0)printf(":%d\n",bytes);
 
-    //interpreting the received bytes with a state machine
-    for (int i = 0; i < bytes; i++){
+    struct array a = {malloc(destuffedSize*sizeof(unsigned char)), destuffedSize};
+    memcpy(a.content,buf.content,destuffedSize);
+    return a;
+
+}
+
+//So funciona com tramas de supervição e não numeradas
+void updateState(struct array buf,unsigned char a,unsigned char c){
+    for (int i = 0; i < buf.size; i++){
         switch (state){
             case START:
-                if (buf[i] == FLAG)
+                if (buf.content[i] == FLAG)
                 {
                     state = FLAG_RCV;
                 }
                 break;
             case FLAG_RCV:
-                if (buf[i] == A){
+                if (buf.content[i] == a) {
                     state = A_RCV;
-                else{
+                }else{
                     state = START;
                 }
                 break;
             case A_RCV:
-                if (buf[i] == FLAG)
+                if (buf.content[i] == FLAG)
                 {
                     state = FLAG_RCV;
-                }else if (buf[i] == UA)
+                }else if (buf.content[i] == c)
                 {
                     state = C_RCV;
                 }else{
@@ -121,10 +122,10 @@ void receptor(){
                 }
                 break;
             case C_RCV:
-                if (buf[i] == (A^UA))
+                if (buf.content[i] == (a^c))
                 {
                     state = BCC_OK;
-                }else if(buf[i] == FLAG)
+                }else if(buf.content[i] == FLAG)
                 {
                     state = FLAG_RCV;
                 }else{
@@ -132,7 +133,7 @@ void receptor(){
                 }
                 break;
             case BCC_OK:
-                if (buf[i] == FLAG)
+                if (buf.content[i] == FLAG)
                 {
                     state = END;
                 }else{
@@ -146,35 +147,49 @@ void receptor(){
         }
         printf("state:%d\n",state);
     }
-
 }
 
-void emissor(){
+struct array receptor(int fd){
 
-    alarmEnabled = FALSE;
-    alarmCount++;
+    unsigned char* buf = (unsigned char*) malloc((BUF_SIZE + 1) * sizeof(unsigned char )); // +1: Save space for the final '\0' char
+    // Returns after 5 chars have been input
+    size_t bytes = read(fd, buf, BUF_SIZE);
+    buf[bytes] = '\0'; // Set end of string to '\0', so we can printf
+
+    //printing the hexadecimal code received
+    for (int i = 0; i < bytes; ++i) {
+        printf("%02X",buf[i]);
+    }
+    if(bytes > 0){
+        printf(":%lu\n",bytes);
+        buf = realloc(buf,bytes);
+    }
 
 
-    // Create string to send
-    // read the payload
-    unsigned char payload[] = {FLAG, A, SET, A ^ SET, FLAG};
+    //interpreting the received bytes with a state machine
 
-    //payload = stuff(payload,sizeof(payload)/sizeof(char));
+    struct array a = {buf, bytes};
+
+    return a;
+}
+
+void emissor(int fd, struct array payload){
+
     // printing the hexadecimal value of the payload
-    for (int i = 0; i < sizeof(payload)/sizeof(char); ++i) {
-        printf("%02X",payload[i]);
+    for (int i = 0; i < payload.size; ++i) {
+        printf("%02X",payload.content[i]);
     }
     printf("\n");
 
     // writing the output
-    int bytes = write(fd, payload, sizeof(payload)/sizeof(char));
-    printf("%d bytes written\n", bytes);
+    size_t bytes = write(fd, payload.content, payload.size);
+    printf("%lu bytes written\n", bytes);
 }
 
 int openPort(const char *serialPortName){
     // Open serial port device for reading and writing, and not as controlling tty
     // because we don't want to get killed if linenoise sends CTRL-SET.
-    fd = open(serialPortName, O_RDWR | O_NOCTTY);
+    int fd = open(serialPortName, O_RDWR | O_NOCTTY);
 
     if (fd < 0)
     {
@@ -226,7 +241,7 @@ int openPort(const char *serialPortName){
     return fd;
 }
 
-void closePort(){
+void closePort(int fd){
     // Restore the old port settings
     if (tcsetattr(fd, TCSANOW, &oldtio) == -1)
     {
@@ -237,26 +252,142 @@ void closePort(){
     close(fd);
 }
 
-void connect(){
+int message(int fd,struct array payload,unsigned char a,unsigned char c ){
 
-    emissor();
+    emissor(fd, payload);
+    int alarmCount = 0;
+
+    //register time
     long int start = time(NULL);
     long int end;
 
-    while (alarmCount < RETRANSMITION_COUNT && STOP == FALSE){
-        receptor();
+
+    while (alarmCount < numTransmissions && STOP == FALSE){
+        //receiving and processing the data
+        struct array bytes = receptor(fd);
+        state = START;
+        updateState(bytes,a,c);
+        free(bytes.content);
+
         end = time(NULL);
-        if(((double)(end-start))>= 3){
-            emissor();
+        if(((double)(end-start))>= TIMEOUT){
+            alarmCount++;
+            emissor(fd, payload);
             start=end;
         }
     }
 
-    if(alarmCount == RETRANSMITION_COUNT)printf("Connection failed");
-    else printf("Connection established");
+    if(alarmCount == numTransmissions)return -1;
+    else return 0;
+}
 
-    // Wait until all bytes have been written to the serial port
-    sleep(1);
+void connect(int fd){
+    //build the set payload
+    unsigned char a[] = {FLAG, A, SET, A ^ SET, FLAG};
+    struct array payload = {a,5};
+    if(message(fd,payload,A,UA) == 0) printf("Connection established");
+    else printf("Connection failed");
+}
+
+void desconect(int fd){
+    unsigned char a[] = {FLAG,A,DISC,A^DISC,FLAG};
+    struct array payload = {a,5};
+
+    if(message(fd,payload,A,UA) == 0)printf("Connection terminated");
+    else printf("unable to terminate connection");
+
+    unsigned char b[] = {FLAG,A,UA,A^UA,FLAG};
+    struct array ua = {b,5};
+    emissor(fd,ua);
+}
+
+void readData(int fd){
+    struct array buf = receptor(fd);
+    state = START;
+    int c;
+
+    for (int i = 0; i < buf.size; i++){
+        switch (state){
+            case START:
+                if (buf.content[i] == FLAG)
+                {
+                    state = FLAG_RCV;
+                }
+                break;
+            case FLAG_RCV:
+                if (buf.content[i] == A) {
+                    state = A_RCV;
+                }else{
+                    state = START;
+                }
+                break;
+            case A_RCV:
+                if (buf.content[i] == FLAG){
+                    state = FLAG_RCV;
+                }else if (buf.content[i] == 0x45){
+                    c = 0x40;
+                    state = C_RCV;
+                }else if(buf.content[i] == 0x05){
+                    c = 0x00;
+                    state = C_RCV;
+                }else{
+                    state = START;
+                }
+                break;
+            case C_RCV:
+                if (buf.content[i] == (0x45^c))
+                {
+                    state = BCC_OK;
+                }else if(buf.content[i] == FLAG)
+                {
+                    state = FLAG_RCV;
+                }else{
+                    state = START;
+                }
+                break;
+            case BCC_OK:
+                if (buf.content[i] == FLAG)
+                {
+                    state = END;
+                }else{
+                    state = START;
+                }
+            case END:
+                STOP = TRUE;
+                break;
+            default:
+                state = START;
+        }
+        printf("state:%d\n",state);
+    }
+
+}
+
+void sendData(int fd, struct array data){
+    data = stuff(data);
+
+    const unsigned char header[] = {FLAG, A, C, A ^ C};
+
+    if(C == 0x00)C = 0x45;
+    else C = 0x05;
+
+    unsigned char BCC2 = data.content[0];
+    for (int i = 1; i < data.size; ++i) {
+        BCC2 = BCC2 ^ data.content[i];
+    }
+    const unsigned char footer[] = {BCC2, FLAG};
+
+    unsigned char* payload = malloc((4+data.size+2)*sizeof(unsigned char));
+    struct array a = {payload,(4+data.size+2)};
+
+    memcpy(payload,   header, (4* sizeof(unsigned char)));
+    memcpy(payload+4, data.content,   data.size* sizeof(unsigned char));
+    memcpy(payload+data.size+4,footer,2* sizeof(unsigned char));
+
+    message(fd,a,A,C == 0x00 ? 0x05 :0x85);
+
+    free(payload);
+    free(data.content);
 }
 
 int main(int argc, char *argv[]) {
@@ -265,17 +396,17 @@ int main(int argc, char *argv[]) {
 
     // Program usage: Uses either COM1 or COM2
 
-    if (argc < 2) {
+    if (argc != 2) {
         printf("Incorrect program usage\n"
                "Usage: %s <SerialPort>\n"
                "Example: %s /dev/ttyS1\n",
                argv[0],
                argv[0]);
         exit(1);
+    }else{
+        int fd = openPort(serialPortName);
+    connect(fd);
+        closePort(fd);
     }
-
-    openPort(serialPortName);
-    connect();
-    closePort();
 
 }
