@@ -173,7 +173,7 @@ struct array stuff(struct array buf){
         }
         stuffedSize++;
     }
-    
+
     stuffed = realloc(stuffed,stuffedSize);
 
     struct array a = {stuffed,stuffedSize};
@@ -181,7 +181,7 @@ struct array stuff(struct array buf){
     return a;
 }
 //So funciona com tramas de supervição e não numeradas
-int updateState(struct array buf,int* myState){
+int updateState(struct array buf,int* myState,unsigned char c){
     for (int i = 0; i < buf.size; i++){
         switch (*myState){
             case START:
@@ -201,16 +201,17 @@ int updateState(struct array buf,int* myState){
                 if (buf.content[i] == FLAG)
                 {
                     *myState = FLAG_RCV;
-                }else{
-                    control = buf.content[i];
+                }else if(c == buf.content[i]){
                     *myState = C_RCV;
+                }else{
+                    *myState = START;
                 }
                 break;
             case C_RCV:
                 if(buf.content[i] == FLAG)
                 {
                     *myState = FLAG_RCV;
-                }else if(control^A){
+                }else if(buf.content[i] == (c ^ A)){
                     *myState = BCC_OK;
                 }else{
                     *myState = START;
@@ -231,7 +232,7 @@ int updateState(struct array buf,int* myState){
                 *myState = START;
         }
     }
-    return control;
+    return c;
 }
 
 struct array getResponse(unsigned char c,int correct) {
@@ -262,9 +263,9 @@ struct array getResponse(unsigned char c,int correct) {
             a[2] = c == I1? RR0:RR1;
             a[3] = c == I1? RR0:RR1;
         }else if(c == I0 || c == I1){
-             a[2] = REJ1;
+            a[2] = REJ1;
         }else if(c == I1){
-             a[2] = REJ0;
+            a[2] = REJ0;
         }else{
             return (struct array) {NULL, -1};
         }
@@ -281,8 +282,11 @@ int awaitConnection(int fd){
     //doesn't send UA
     while (connected == 0){
         if(state == START)i = 0;
-        read(fd,(void*)&buf[i],1);
-        updateState((struct array){&buf[i],1},&myState);
+        int bytes = read(fd,(void*)&buf[i],1);
+        if (bytes > 0) {
+            printf("%02X\n",buf[i]);
+            updateState((struct array) {&buf[i], 1}, &myState,SET);
+        }
         if(state == END && c == SET)break;
         i = (i+1)%BUF_SIZE;
     }
@@ -298,8 +302,6 @@ struct array receptor(int fd){
     buf[bytes] = '\0'; // Set end of string to '\0', so we can printf
 
     struct array a = {buf, bytes};
-    if(bytes > 0)printFrame(a,0);
-
     return a;
 }
 
@@ -382,12 +384,11 @@ int message(int fd,struct array payload,unsigned char a,unsigned char c ){
     long int start = time(NULL);
     long int end;
     int myState = START;
-    int myC;
 
     while (alarmCount < numTransmissions && myState != END){
         //receiving and processing the data
         struct array bytes = receptor(fd);
-        myC = updateState(bytes, &myState);
+        updateState(bytes, &myState,c);
         free(bytes.content);
         end = time(NULL);
 
@@ -397,7 +398,7 @@ int message(int fd,struct array payload,unsigned char a,unsigned char c ){
             emissor(fd, payload);
             start = time(NULL);
         }
-        if(myC != c && myState == END){
+        if(myState == END){
             state = START;
             printf("Unexpected response sending frame again\n");
             emissor(fd, payload);
@@ -470,7 +471,7 @@ struct array processData(int fd, unsigned char *buf, int* i) {
             BCC2 ^= data[dataSize];
         }
 
-        
+
     }
     if(dataSize > 0){
         data = realloc(data,dataSize);
@@ -543,7 +544,7 @@ struct array getData(int fd){
             printf("%02x",data.content[j]);
         }
         printf("\n");
-        
+
         return data;
     }
     if(connected == -1){
