@@ -23,7 +23,7 @@
 #define UA 0x07
 
 enum states{
-    START,FLAG_RCV,A_RCV,C_RCV,BCC_OK,STOP2
+    START,FLAG_RCV,A_RCV,C_RCV,BCC_OK,END
 };
 
 #define FALSE 0
@@ -170,12 +170,12 @@ int main(int argc, char *argv[])
             case BCC_OK:
                 if (buf[i] == FLAG)
                 {
-                    state = STOP2;
+                    state = END;
                 }else{
                     state = START;
                 }
                 break;
-            case STOP2:
+            case END:
 
                 STOP = TRUE;
                 break;

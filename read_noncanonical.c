@@ -29,7 +29,7 @@
 volatile int STOP = FALSE;
 
 enum states{
-    START,FLAG_RCV,A_RCV,C_RCV,BCC_OK,STOP2
+    START,FLAG_RCV,A_RCV,C_RCV,BCC_OK,END
 };
 
 int main(int argc, char *argv[])
@@ -158,11 +158,11 @@ int main(int argc, char *argv[])
             case BCC_OK:
                 if (buf[i] == FLAG)
                 {
-                    state = STOP2;
+                    state = END;
                 }else{
                     state = START;
                 } 
-            case STOP2:
+            case END:
                 printf("SET recived send UA:");
                 for (int i = 0; i < sizeof(payload)/sizeof(char) ; ++i) {
                     printf("%X",payload[i]);
