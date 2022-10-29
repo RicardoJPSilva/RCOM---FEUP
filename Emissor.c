@@ -231,21 +231,25 @@ int updateState(struct array buf,int* myState,unsigned char c){
                 i--;
                 *myState = START;
         }
+        printf("State:%d\n",*myState);
     }
     return c;
 }
 
 struct array getResponse(unsigned char c,int correct) {
-    unsigned char a[] = {FLAG,A,0x00,0x00,FLAG};
+
+    unsigned char* a = malloc(5);
+    a[0] = FLAG;
+    a[1] = A;
+    a[4] = FLAG;
     if(correct == 1) {
         switch (c) {
             case DISC:
                 a[2] = DISC;
-                connected == 2;
+                connected = 2;
                 break;
             case SET:
                 a[2] = UA;
-                C == I0;
                 break;
             case I0:
                 a[2] = RR1;
@@ -256,49 +260,31 @@ struct array getResponse(unsigned char c,int correct) {
                 C = I0;
                 break;
             default:
-                return (struct array) {NULL, -1};
+                free(a);
+                return (struct array) {NULL, 0};
         }
     }else{
         if (c != C){
             a[2] = c == I1? RR0:RR1;
             a[3] = c == I1? RR0:RR1;
-        }else if(c == I0 || c == I1){
+        }else if(c == I0){
             a[2] = REJ1;
         }else if(c == I1){
             a[2] = REJ0;
         }else{
-            return (struct array) {NULL, -1};
+            free(a);
+            return (struct array) {NULL, 0};
         }
     }
     a[3] = a[2]^A;
     return (struct array) {a, 5};
 }
 
-int awaitConnection(int fd){
-    unsigned char* buf = malloc(BUF_SIZE* sizeof(unsigned char));
-    int i = 0;
-    unsigned char c = 0xFF;//garbage value
-    int myState = START;
-    //doesn't send UA
-    while (connected == 0){
-        if(state == START)i = 0;
-        int bytes = read(fd,(void*)&buf[i],1);
-        if (bytes > 0) {
-            printf("%02X\n",buf[i]);
-            updateState((struct array) {&buf[i], 1}, &myState,SET);
-        }
-        if(state == END && c == SET)break;
-        i = (i+1)%BUF_SIZE;
-    }
-    free(buf);
-    return 0;
-}
-
 struct array receptor(int fd){
 
     unsigned char* buf = (unsigned char*) malloc((BUF_SIZE + 1) * sizeof(unsigned char )); // +1: Save space for the final '\0' char
     // Returns after 5 chars have been input
-    size_t bytes = read(fd, buf, BUF_SIZE);
+    size_t bytes = read(fd, buf, 1);
     buf[bytes] = '\0'; // Set end of string to '\0', so we can printf
 
     struct array a = {buf, bytes};
@@ -376,7 +362,7 @@ void closePort(int fd){
     close(fd);
 }
 
-int message(int fd,struct array payload,unsigned char a,unsigned char c ){
+int message(int fd,struct array payload, unsigned char c ){
     emissor(fd, payload);
     int alarmCount = 0;
 
@@ -388,6 +374,7 @@ int message(int fd,struct array payload,unsigned char a,unsigned char c ){
     while (alarmCount < numTransmissions && myState != END){
         //receiving and processing the data
         struct array bytes = receptor(fd);
+        printf("%02X",bytes.content[0]);
         updateState(bytes, &myState,c);
         free(bytes.content);
         end = time(NULL);
@@ -398,12 +385,15 @@ int message(int fd,struct array payload,unsigned char a,unsigned char c ){
             emissor(fd, payload);
             start = time(NULL);
         }
+        /*
         if(myState == END){
             state = START;
+            alarmCount++;
             printf("Unexpected response sending frame again\n");
             emissor(fd, payload);
             start = time(NULL);
         }
+         */
 
     }
 
@@ -416,7 +406,7 @@ int connect(int fd){
     C = 0x00;
     unsigned char a[] = {FLAG, A, SET, A ^ SET, FLAG};
     struct array payload = {a,5};
-    if(message(fd,payload,A,UA) == 0){
+    if(message(fd,payload,UA) == 0){
         printf("Connection established\n");
         return 0;
     }
@@ -432,17 +422,39 @@ int disconnect(int fd){
 
     unsigned char b[] = {FLAG,A,UA,A^UA,FLAG};
     struct array ua = {b,5};
-    emissor(fd,ua);
 
-    if(message(fd,payload,A,UA) == 0){
+    if(message(fd,payload,DISC) == 0){
+        emissor(fd,ua);
         printf("Connection terminated\n");
         return 0;
-    }
-    else {
+    }else {
         printf("unable to terminate connection\n");
         return 1;
     }
+}
 
+int awaitConnection(int fd){
+    unsigned char* buf = malloc(BUF_SIZE* sizeof(unsigned char));
+    int i = 0;//garbage value
+    int myState = START;
+    //doesn't send UA
+    while (connected == 0){
+        if(myState == START)i = 0;
+        int bytes = read(fd,(void*)&buf[i],1);
+        if (bytes > 0) {
+            printf("%02X\n",buf[i]);
+            updateState((struct array) {&buf[i], 1}, &myState,SET);
+        }
+        if(myState == END){
+            printFrame((struct array){&buf[i-4],5},0);
+            connected = 1;
+            break;
+        }
+        i = (i+1)%BUF_SIZE;
+    }
+    free(buf);
+    emissor(fd,getResponse(SET,1));
+    return 0;
 }
 
 struct array processData(int fd, unsigned char *buf, int* i) {
@@ -452,14 +464,14 @@ struct array processData(int fd, unsigned char *buf, int* i) {
     while(state != END && (*i < BUF_SIZE)){
         (*i)++;
         read(fd, (void*)&buf[*i], 1);
-        if(buf[*i] == FLAG_RCV){
+        if(buf[*i] == FLAG){
             if(BCC2 == 0){
-                state == END;
+                state = END;
                 return  (struct array){data,dataSize};
             }else{
                 state = START;
                 free(data);
-                return (struct array){NULL,-1};
+                return (struct array){NULL,0};
             }
         }
         if(buf[*i] == ESC){
@@ -470,28 +482,27 @@ struct array processData(int fd, unsigned char *buf, int* i) {
             data[dataSize] = buf[*i];
             BCC2 ^= data[dataSize];
         }
-
-
+        dataSize++;
     }
     if(dataSize > 0){
         data = realloc(data,dataSize);
         return (struct array){data,dataSize};
     }
-    return (struct array){NULL,-1};
+    return (struct array){NULL,0};
 }
 
 struct array getData(int fd){
     unsigned char c = 0xFF; //garbage value
     unsigned char* buf = malloc(BUF_SIZE * sizeof(unsigned char));
     int i = 0;
-    struct array data;
-    struct array response;
+    struct array data = {NULL,0};
+    struct array response = {NULL,0};
 
     while(connected == 1 || connected == 2) {
         state = START;
         while (state != END && i < BUF_SIZE) {
             if(state == START)i = 0;
-            read(fd,&buf[i],1);
+            if(read(fd,&buf[i],1) == 0)break;
             switch (state) {
                 case START:
                     state = buf[i] == FLAG ? FLAG_RCV : START;
@@ -506,7 +517,10 @@ struct array getData(int fd){
                 case C_RCV:
                     if (buf[i] == (c ^ A)) {
                         state = BCC_OK;
-                        if(c == I1 || c == I0) data = processData(fd, buf, &i);
+                        if(c == I1 || c == I0) {
+                            data = processData(fd, buf, &i);
+                            response = data.size > 0? getResponse(c,1):getResponse(c,0);
+                        }
                     } else if (buf[i] == FLAG) {
                         state = FLAG_RCV;
                     } else {
@@ -528,13 +542,12 @@ struct array getData(int fd){
                     state = START;
             }
             i++;
-            printf("state:%d\n", state);
         }
-        struct frame myFrame     = {0,data.size,data.content,c};
+        if(i > 0)printFrame((struct array){buf,i},0);
         if(response.size > 0)emissor(fd,response);
         if((c == I1 || c == I0) && i < BUF_SIZE)break;//prevents frames bigger than BUF_SIZE
-        if(c != DISC)connected = 1;
         if(c == UA && connected == 2)connected = -1;
+        if(c != DISC && connected == 2)connected = 1;
     }
 
     //need review
@@ -552,7 +565,7 @@ struct array getData(int fd){
         free(data.content);
         connected = -1;
     }
-    return (struct array){NULL,-1};
+    return (struct array){NULL,0};
 }
 
 int sendData(int fd, struct array data){
@@ -580,7 +593,7 @@ int sendData(int fd, struct array data){
     memcpy(payload + 4, data.content,   data.size * sizeof(unsigned char));
     memcpy(payload + 4 + data.size+1 ,footer,sizeof(unsigned char));
 
-    int r = message(fd,a,A, C == I0?RR1:RR0);
+    int r = message(fd,a, C == I0?RR1:RR0);
 
     free(temp.content);
     free(payload);
