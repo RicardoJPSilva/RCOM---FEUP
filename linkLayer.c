@@ -9,7 +9,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <time.h>
-#include "emissor.h"
+#include "linkLayer.h"
 
 // Baudrate settings are defined in <asm/termbits.h>, which is
 // included by <termios.h>
@@ -44,6 +44,16 @@ struct linkLayer{
 #define REJ1 0x81
 #define I0 0x00
 #define I1 0x40
+
+//typedef para identificar recetor e emissor
+
+typedef enum {
+    TRANSMITTER, RECEIVER;
+} ConnectionType;
+
+static ConnectionType connectionType;
+
+//-------------------------------------------
 
 unsigned char C = I0;
 
@@ -180,6 +190,7 @@ struct array stuff(struct array buf){
 
     return a;
 }
+
 //So funciona com tramas de supervição e não numeradas
 int updateState(struct array buf,int* myState,unsigned char c){
     for (int i = 0; i < buf.size; i++){
@@ -306,7 +317,6 @@ int openPort(const char *serialPortName){
         perror(serialPortName);
         exit(-1);
     }
-
 
     struct termios newtio;
 
@@ -603,6 +613,12 @@ int sendData(int fd, struct array data){
     else C = I0;
 
     return r;
+}
+
+int llopen(ConnectionType type) {
+    connectionType = type;
+
+    int fd = openPort();
 }
 
 int main(int argc, char *argv[]) {
