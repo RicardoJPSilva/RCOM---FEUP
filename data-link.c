@@ -5,11 +5,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <time.h>
-<<<<<<<< HEAD:data-link.c
 #include "data-link.h"
-========
-#include "linkLayer.h"
->>>>>>>> origin/master:linkLayer.c
 
 // Baudrate settings are defined in <asm/termbits.h>, which is
 // included by <termios.h>
@@ -36,16 +32,6 @@
 #define REJ1 0x81
 #define I0 0x00
 #define I1 0x40
-
-//typedef para identificar recetor e emissor
-
-typedef enum {
-    TRANSMITTER, RECEIVER;
-} ConnectionType;
-
-static ConnectionType connectionType;
-
-//-------------------------------------------
 
 unsigned char C = I0;
 
@@ -177,7 +163,6 @@ struct array stuff(struct array buf){
 
     return a;
 }
-
 //So funciona com tramas de supervição e não numeradas
 void updateState(unsigned char byte,int* myState){
     switch (*myState){
@@ -300,6 +285,7 @@ int openPort(const char *serialPortName){
     {
         return -1;
     }
+
 
     struct termios newtio;
 
@@ -595,16 +581,7 @@ int Write(int fd, struct array data){
     return r;
 }
 
-<<<<<<<< HEAD:data-link.c
 /*
-========
-int llopen(ConnectionType type) {
-    connectionType = type;
-
-    int fd = openPort();
-}
-
->>>>>>>> origin/master:linkLayer.c
 int main(int argc, char *argv[]) {
 
     const char *serialPortName = argv[1];
