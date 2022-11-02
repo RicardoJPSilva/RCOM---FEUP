@@ -264,11 +264,8 @@ struct array receptor(int fd){
     // Returns after 5 chars have been input
     long bytes = read(fd, buf, 1);
     buf[bytes] = '\0'; // Set end of string to '\0', so we can printf
-    if(bytes <= 0)return receptor(fd);
-    else {
-        struct array a = {buf, bytes};
-        return a;
-    }
+    struct array a = {buf, bytes};
+    return a;
 }
 
 void emissor(int fd, struct array payload){
