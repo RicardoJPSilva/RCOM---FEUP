@@ -76,6 +76,7 @@ int llopen(const char* portName,int mode,const char* name,size_t size){
 
             if(result1 == 0 ) {
                 printf("data link connection set up\n");
+                printf("---------------------------\n");9
 
                 int name_len = min(strlen(name) + 1, BUF_SIZE - 10 - sizeof(size_t));
                 unsigned char *buf = malloc((5 + name_len) * sizeof(unsigned char) + sizeof(size_t));
@@ -204,6 +205,7 @@ int main(int argc,char* argv[]){
             length = llread(fd,&buffer);
         }
         fclose(myFile);
+        llclose(fd,RECEIVER,fileName,fileSize);
     }else if(argc == 3){
         myFile = fopen(argv[2],"r");
         if(myFile == NULL){

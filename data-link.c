@@ -447,9 +447,13 @@ struct array processData(int fd, unsigned char *buf, int* i) {
     int dataSize = 0;
     unsigned char BCC2 = 0; //zero is the neutral element of XOR
     while(state != END && (dataSize < BUF_SIZE-5)){
-        (*i)++;
 
-        if(read(fd, (void*)&buf[*i], 1) < 1)continue;
+        (*i)++;
+        if(read(fd, (void*)&buf[*i], 1) < 1){
+            (*i)--;
+            continue;
+        }
+
 
         if(buf[*i] == FLAG){
             if(BCC2 == 0){
@@ -494,14 +498,15 @@ struct array Read(int fd){
         state = START;
         while (state != END && i <= BUF_SIZE) {
             if(state == START)i = 0;
-            if(read(fd,&buf[i],1) < 1)break;
+            if(read(fd,&buf[i],1) < 1)continue;
 
             switch (state) {
                 case START:
                     state = buf[i] == FLAG ? FLAG_RCV : START;
                     break;
                 case FLAG_RCV:
-                    state = buf[i] == A ? A_RCV : START;
+                    if(buf[i] == A)state = A_RCV;
+                    else if(buf[i] != FLAG) state = START;
                     break;
                 case A_RCV:
                     state = buf[i] == FLAG ? FLAG_RCV : C_RCV;
