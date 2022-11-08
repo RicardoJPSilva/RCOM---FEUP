@@ -448,7 +448,8 @@ struct array processData(int fd, unsigned char *buf, int* i) {
     unsigned char BCC2 = 0; //zero is the neutral element of XOR
     while(state != END && (dataSize < BUF_SIZE-5)){
         (*i)++;
-        read(fd, (void*)&buf[*i], 1);
+
+        if(read(fd, (void*)&buf[*i], 1) < 1)continue;
 
         if(buf[*i] == FLAG){
             if(BCC2 == 0){
