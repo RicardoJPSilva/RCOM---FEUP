@@ -16,15 +16,15 @@
 #define FILE_LENGTH 0
 #define FILE_NAME 1
 
-#define PACKED_SIZE (BUF_SIZE-9)
+#define PACKED_SIZE (BUF_SIZE-12)
 
 char* fileName;
 size_t fileSize;
 size_t sequenceCounter = 0;
 size_t byteCounter = 0;
+int isConnected;
 
-int min(int n1, int n2) {
-
+size_t min(size_t n1, size_t n2) {
     if(n1<n2) {
         return n1;
     } else if(n2>n1) {
@@ -34,62 +34,77 @@ int min(int n1, int n2) {
     }
 }
 
-int llopen(const char* portName,int mode,char* name,size_t size){
+int llopen(const char* portName,int mode,const char* name,size_t size){
     int fd = openPort(portName);
     if(fd >= 0) {
         if (mode == RECEIVER ) {
+            printf("awaiting Connection\n");
             int result1 = awaitConnection(fd);
 
             struct array buf = Read(fd);
             if(buf.content[0] != START)return -1;
-            size_t mysize;
-            int i = 1;
+            size_t mySize;
+            size_t i = 1;
             while(i < buf.size) {
                 if(buf.content[i] == FILE_LENGTH){
                      i++;
-                     mysize = buf.content[i];
+                    mySize = buf.content[i];
                      i++;
-                    memcpy(&fileSize,&buf.content[i],mysize);
-                    printf("%luFILE_LENGTH:%lu\n",mysize,fileSize);
-                    i += mysize;
+                    memcpy(&fileSize, &buf.content[i], mySize);
+                    printf("%luFILE_LENGTH:%lu\n", mySize, fileSize);
+                    i += mySize;
                 }else if (buf.content[i] == FILE_NAME){
                     i++;
-                    mysize = buf.content[i];
+                    mySize = buf.content[i];
                     i++;
-                    fileName = malloc(mysize);
-                    memcpy(fileName,&buf.content[i],mysize);
+                    fileName = malloc(mySize);
+                    memcpy(fileName, &buf.content[i], mySize);
                     printf("FILE_NAME:%s\n",fileName);
-                    i +=mysize;
+                    i +=mySize;
                 }else{
                     break;
                 }
             }
-            if (result1 == 0)return fd;
+            if (result1 == 0){
+                isConnected = 1;
+                return fd;
+            }
             else return -1;
         } else {
+            printf("Setting up data-link connection\n");
             int result1 = connect(fd);
-            int name_len = min(strlen(name)+1,BUF_SIZE - 10 - sizeof(size_t));
-            unsigned char* buf = malloc((5+name_len) * sizeof(unsigned char) + sizeof(size_t));
-            buf[0] = START;
-            buf[1] = FILE_LENGTH;
-            buf[2] = sizeof(size_t);
-            //number of chars it takes to store a size_t (with round up)
 
-            memcpy(&buf[3],&size, sizeof(size_t));
-            buf[3+ sizeof(size_t)] = FILE_NAME;
-            buf[4 + sizeof(size_t)] = name_len;
-            memcpy(&buf[5 + sizeof(size_t)],name,name_len);
-            buf[4 + sizeof(size_t)+name_len] =  '\0';
-            int result = Write(fd,(struct array){buf,(5+name_len)* sizeof(unsigned char) + sizeof(size_t)});
+            if(result1 == 0 ) {
+                printf("data link connection set up\n");
 
-            if (result1 == 0 && result == 0)return fd;
-            else return -1;
+                int name_len = min(strlen(name) + 1, BUF_SIZE - 10 - sizeof(size_t));
+                unsigned char *buf = malloc((5 + name_len) * sizeof(unsigned char) + sizeof(size_t));
+                buf[0] = START;
+                buf[1] = FILE_LENGTH;
+                buf[2] = sizeof(size_t);
+                //number of chars it takes to store a size_t (with round up)
+
+                memcpy(&buf[3], &size, sizeof(size_t));
+                buf[3 + sizeof(size_t)] = FILE_NAME;
+                buf[4 + sizeof(size_t)] = name_len;
+                memcpy(&buf[5 + sizeof(size_t)], name, name_len);
+                buf[4 + sizeof(size_t) + name_len] = '\0';
+                printf("Setting up aplication link\n");
+                int result = Write(fd, (struct array) {buf, (5 + name_len) * sizeof(unsigned char) + sizeof(size_t)});
+                if(result == 0){
+                    printf("Application link set up\n");
+                    isConnected = 1;
+                    return fd;
+                }
+            }
+            printf("Connection failed\n");
+            return -1;
         }
     }
     return fd;
 }
 
-int llwrite(int fd,unsigned char * buffer, int length){
+int llwrite(int fd,const unsigned char * buffer, int length){
     unsigned char* frame = malloc(length+4);
 
     frame[0] = DATA;
@@ -102,9 +117,13 @@ int llwrite(int fd,unsigned char * buffer, int length){
     frame[3] = length % (BUF_SIZE-4);
 
     memcpy(&frame[4],buffer,length);
-
-    if(Write(fd,(struct array){frame,length+4}) == 0)return 1;
-    else return 0;
+    printf("Writing info into:\n");
+    if(Write(fd,(struct array){frame,length+4}) == 0){
+        printf("info Writen successfully\n");
+        return 1;
+    }
+    printf("Error writing data\n");
+    return 0;
 }
 
 size_t llread(int fd,char** buffer) {
@@ -112,19 +131,27 @@ size_t llread(int fd,char** buffer) {
     if(a.content[0] == DATA){
         *buffer = malloc(a.size-4);
         memcpy(*buffer,&a.content[4],a.size-4);
-        return a.content[3];
-    }else if(a.content[0] == END){
+        int length = a.content[3];
         free(a.content);
-        return 0;
-    }else{
-        return -1;
+        return length;
+    }else if(a.content[0] == END){
+        isConnected = 0;
     }
+    free(a.content);
+    return -1;
+
 }
 
-int llclose(int fd,int mode,char* name,size_t size) {
+int llclose(int fd,int mode,const char* name,size_t size) {
 
-    if(mode == TRANSMITTER) {
-        int name_len = min(strlen(name)+1,BUF_SIZE - 10 - sizeof(size_t));
+    if(mode == RECEIVER){
+        while (connectionStatus() != -1) {
+            struct array a = Read(fd);
+            if(size>0)free(a.content);
+        }
+    }else{
+
+        size_t name_len = min(strlen(name)+1,BUF_SIZE - 10 - sizeof(size_t));
         unsigned char* buf = malloc((5+name_len) * sizeof(unsigned char) + sizeof(size_t));
         buf[0] = END;
         buf[1] = FILE_LENGTH;
@@ -136,12 +163,20 @@ int llclose(int fd,int mode,char* name,size_t size) {
         buf[4 + sizeof(size_t)] = name_len;
         memcpy(&buf[5 + sizeof(size_t)],name,name_len);
         buf[4 + sizeof(size_t)+name_len] =  '\0';
+        printf("Closing Connection\n");
         int result = Write(fd,(struct array){buf,(5+name_len)* sizeof(unsigned char) + sizeof(size_t)});
 
-        if(result == 0)return fd;
-        else return -1;
+        disconnect(fd);
+        closePort(fd);
+        if(result == 0){
+            printf("Connection closed successfully\n");
+            return fd;
+        }
+        printf("Failed to terminate connection");
+        return -1;
     }
     closePort(fd);
+    return fd;
 }
 
 int main(int argc,char* argv[]){
@@ -150,12 +185,17 @@ int main(int argc,char* argv[]){
     FILE* myFile;
     if(argc == 2){
         fd = llopen(serialPortName, RECEIVER,"",0);
+        if(fd < 0) exit(-1);
 
         myFile = fopen("b.txt","w");
-        if(fd < 0) exit(-1);
+        if(myFile == NULL){
+            printf("Wasn't able to open file");
+            exit(1);
+        }
+
         char* buffer;
-        int length = llread(fd,  &buffer);
-        while (length > 0){
+        size_t length = llread(fd,  &buffer);
+        while (isConnected == 1){
             for (int i = 0; i < length; ++i) {
                 fputc(buffer[i],myFile);
             }
@@ -163,6 +203,7 @@ int main(int argc,char* argv[]){
             free(temp);
             length = llread(fd,&buffer);
         }
+        fclose(myFile);
     }else if(argc == 3){
         myFile = fopen(argv[2],"r");
         if(myFile == NULL){
@@ -170,19 +211,42 @@ int main(int argc,char* argv[]){
             exit(1);
         }
 
-        fileName = "b.txt";
+        FILE* test = fopen("test.txt","w");
+        if(test == NULL){
+            printf("Wasn't able to open file");
+            exit(1);
+        }
+
+        //get the size of the file
         fseek(myFile,0,SEEK_END);
         fileSize = ftell(myFile);
         fseek(myFile,0,SEEK_SET);
 
+        //opening the connection
         fd = llopen(serialPortName, TRANSMITTER,argv[2],fileSize);
         if(fd < 0) exit(-1);
-        char* payload = malloc(PACKED_SIZE);
-        while(fgets(payload,PACKED_SIZE,myFile) != NULL){
-            if(llwrite(fd,(unsigned char*)payload, strlen(payload)) < 0)exit(1);
+
+        unsigned char* payload = malloc(PACKED_SIZE);
+        int i;
+
+        while(!feof(myFile)){
+            printf("data:");
+            for (i = 0; i < PACKED_SIZE && !feof(myFile); ++i) {
+                payload[i] = fgetc(myFile);
+                putc(payload[i],test);
+                printf("%02X",payload[i]);
+            }
+            if(feof(myFile))i--;
+            printf("\n");
+            if(llwrite(fd,payload, i) < 0)exit(1);
         }
-        if(llclose(fd,TRANSMITTER,(char*)fileName,fileSize) < 0)exit(1);
+
+        if(llclose(fd,TRANSMITTER,argv[2],fileSize) < 0)exit(1);
+
         free(payload);
+        fclose(myFile);
+        fclose(test);
+
     }else{
         printf("Incorrect program usage\n"
                "Usage: %s <SerialPort>\n"
@@ -191,10 +255,4 @@ int main(int argc,char* argv[]){
                argv[0]);
         exit(1);
     }
-    fclose(myFile);
-
-
-
-
-
 }

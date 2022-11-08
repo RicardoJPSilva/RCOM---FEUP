@@ -13,7 +13,7 @@
 #define _POSIX_SOURCE 1 // POSIX compliant source
 
 
-#define TIMEOUT 3
+
 
 
 #define FALSE 0
@@ -36,6 +36,7 @@
 unsigned char C = I0;
 
 unsigned char control = 0x00;
+
 int connected = 0;
 
 volatile int STOP = FALSE;
@@ -53,6 +54,10 @@ struct frame{
 
 struct frame myFrame= {0,0,0,0};
 int state = START;
+
+int connectionStatus(){
+    return connected;
+}
 
 void frameAtts(struct frame f) {
 
@@ -241,7 +246,8 @@ struct array getResponse(unsigned char c,int correct) {
                 free(a);
                 return (struct array) {NULL, 0};
         }
-    }else{
+    }
+    else{
         if (c != C){
             a[2] = c == I1? RR0:RR1;
             a[3] = c == I1? RR0:RR1;
@@ -344,7 +350,6 @@ int message(int fd,struct array payload, unsigned char c ){
 
     //register time
     long int start = time(NULL);
-    long int end;
     int myState = START;
 
     while (alarmCount < numTransmissions && (myState != END || control != c)){
@@ -352,11 +357,13 @@ int message(int fd,struct array payload, unsigned char c ){
 
         while(myState != END && ((double)(time(NULL)-start) < TIMEOUT)) {
             struct array bytes = receptor(fd);
-            if(bytes.size <= 0)continue;
+            if(bytes.size <= 0){
+                free(bytes.content);
+                continue;
+            }
             updateState(bytes.content[0], &myState);
             free(bytes.content);
         }
-        end = time(NULL);
 
         if(myState != END){
             printf("No response sending frame again\n");
@@ -428,23 +435,29 @@ int awaitConnection(int fd){
         i = (i+1)%BUF_SIZE;
     }
     free(buf);
-    emissor(fd,getResponse(SET,1));
+    struct array response = getResponse(SET,1);
+    emissor(fd,response);
+    free(response.content);
+
     return 0;
 }
 
 struct array processData(int fd, unsigned char *buf, int* i) {
-    unsigned char* data = malloc(BUF_SIZE * sizeof(unsigned char));
+    unsigned char* data = malloc((BUF_SIZE-5));
     int dataSize = 0;
     unsigned char BCC2 = 0; //zero is the neutral element of XOR
-    while(state != END && (dataSize+5 < BUF_SIZE)){
+    while(state != END && (dataSize < BUF_SIZE-5)){
         (*i)++;
         read(fd, (void*)&buf[*i], 1);
+
         if(buf[*i] == FLAG){
             if(BCC2 == 0){
                 state = END;
+                printf("\nBCC2:%02X",BCC2);
                 return  (struct array){data,dataSize};
             }else{
                 state = START;
+                printf("\nBCC2:%02X",BCC2);
                 free(data);
                 return (struct array){NULL,0};
             }
@@ -455,14 +468,18 @@ struct array processData(int fd, unsigned char *buf, int* i) {
             data[dataSize] = XOR_ESC ^ buf[*i];
         }else{
             data[dataSize] = buf[*i];
-            BCC2 ^= data[dataSize];
         }
+        printf("%02X",data[dataSize]);
+        BCC2 ^= data[dataSize];
         dataSize++;
     }
     if(dataSize > 0){
         data = realloc(data,dataSize);
         return (struct array){data,dataSize};
-    }else return (struct array){NULL,0};
+    }else{
+        free(data);
+        return (struct array){NULL,0};
+    }
 }
 
 struct array Read(int fd){
@@ -474,9 +491,10 @@ struct array Read(int fd){
 
     while(connected == 1 || connected == 2) {
         state = START;
-        while (state != END && i < BUF_SIZE) {
+        while (state != END && i <= BUF_SIZE) {
             if(state == START)i = 0;
-            if(read(fd,&buf[i],1) == 0)break;
+            if(read(fd,&buf[i],1) < 1)break;
+
             switch (state) {
                 case START:
                     state = buf[i] == FLAG ? FLAG_RCV : START;
@@ -515,11 +533,36 @@ struct array Read(int fd){
                 default:
                     state = START;
             }
+            printf("%02Xstate:%d\n",buf[i],state);
             i++;
         }
         if(i > 0)printFrame((struct array){buf,i},0);
-        if(response.size > 0)emissor(fd,response);
-        if((c == I1 || c == I0) && i < BUF_SIZE)break;//prevents frames bigger than BUF_SIZE
+
+        //if the frame is bigger than the buf size discard the frame
+        /*
+        if(i > BUF_SIZE){
+            printf("frame too big discarding frame\n");
+            if(response.size > 0){
+                response.size = 0;
+                unsigned char* temp = response.content;
+                free(temp);
+            }
+            if(data.size > 0){
+                data.size = 0;
+                unsigned char* temp = data.content;
+                free(temp);
+            }
+            state = START;
+            continue;
+        }
+         */
+
+        if(response.size > 0 && state == END){
+            emissor(fd,response);
+            response.size = 0;
+            free(response.content);
+        }
+        if((c == I1 || c == I0) && state == END)break;
         if(connected == 2)connected = c == UA?-1:1;
     }
 
@@ -535,8 +578,7 @@ struct array Read(int fd){
     }
     if(connected == -1){
         free(buf);
-        free(data.content);
-        connected = -1;
+        if(data.size > 0)free(data.content);
     }
     return (struct array){NULL,0};
 }
@@ -559,12 +601,12 @@ int Write(int fd, struct array data){
     data = stuff(data);
 
 
-    unsigned char* payload = malloc((4+data.size+2)*sizeof(unsigned char));
-    struct array a = {payload,(4+data.size+2)};
+    unsigned char* payload = malloc((4+data.size+1)*sizeof(unsigned char));
+    struct array a = {payload,(4+data.size+1)};
 
     memcpy(payload,   header, (4* sizeof(unsigned char)));
     memcpy(payload + 4, data.content,   data.size * sizeof(unsigned char));
-    memcpy(payload + 4 + data.size+1 ,footer,sizeof(unsigned char));
+    memcpy(payload + 4 + data.size ,footer,sizeof(unsigned char));
 
     int r = message(fd,a, C == I0?RR1:RR0);
 
