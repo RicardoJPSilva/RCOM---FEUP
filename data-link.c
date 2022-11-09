@@ -62,25 +62,25 @@ int connectionStatus(){
 void frameAtts(struct frame f) {
 
     if(f.sending == 1) {
-        printf("|Emissor");
+        printf("\t|Emissor");
         for (int i = 7; i < f.size*2; ++i) {
             printf("-");
         }
         printf("|\n");
     } else {
-        printf("|Receptor");
+        printf("\t|Receptor");
         for (int i = 8; i < f.size*2; ++i) {
             printf("-");
         }
         printf("|\n");
     }
-    printf("|New Frame");
+    printf("\t|New Frame");
     for (int i = 9; i < f.size*2; ++i) {
         printf("-");
     }
     printf("|\n");
 
-    printf("|Size: %zu",f.size);
+    printf("\t|Size: %zu",f.size);
     for (int i = 9; i < f.size*2; ++i) {
         printf("-");
     }
@@ -105,26 +105,26 @@ void frameAtts(struct frame f) {
 void printFrame(struct array payload, int sending){
     if(sending == 1){
 
-        printf("|Emissor");
+        printf("\t|Emissor");
         for (int i = 7; i < payload.size*2; ++i) {
             printf("-");
         }
         printf("|\n");
 
     }else{
-        printf("|Receptor");
+        printf("\t|Receptor");
         for (int i = 8; i < payload.size*2; ++i) {
             printf("-");
         }
         printf("|\n");
     }
-    printf("|New Frame");
+    printf("\t|New Frame");
     for (int i = 9; i < payload.size*2; ++i) {
         printf("-");
     }
     printf("|\n");
 
-    printf("|Size:%lu",payload.size);
+    printf("\t|Size:%lu",payload.size);
     size_t n = payload.size;
     int count = 0;
     do{
@@ -136,7 +136,16 @@ void printFrame(struct array payload, int sending){
         printf("-");
     }
     printf("|\n");
-    printf("|");
+
+
+    printf("\t|Control:%02X",payload.content[2]);
+    for (int i = 10; i < payload.size*2; ++i) {
+        printf("-");
+    }
+    printf("|\n");
+
+
+    printf("\t|");
     for (int i = 0; i < payload.size; ++i) {
         printf("%02X",payload.content[i]);
     }
@@ -348,31 +357,42 @@ int message(int fd,struct array payload, unsigned char c ){
     emissor(fd, payload);
     int alarmCount = 0;
 
-    //register time
+
     long int start = time(NULL);
     int myState = START;
 
+    //repeats the loop until it has received the frame or exceeded the number of retransmissions
     while (alarmCount < numTransmissions && (myState != END || control != c)){
         //receiving and processing the data
+        int i = 0;
+        unsigned char* response = malloc(BUF_SIZE);
 
+        //reading the port and storing it
         while(myState != END && ((double)(time(NULL)-start) < TIMEOUT)) {
-            struct array bytes = receptor(fd);
-            if(bytes.size <= 0){
-                free(bytes.content);
+            int bytes = read(fd,&response[i],1);
+            if(bytes <= 0){
+                i = 0;
+                myState = START;
                 continue;
             }
-            updateState(bytes.content[0], &myState);
-            free(bytes.content);
+            printf("\t%02X",response[i]);
+            updateState(response[i], &myState);
+            if(myState == START){
+                i = 0;
+            }
+            i = (i+1)%BUF_SIZE;
         }
+        printFrame((struct array){response,i},0);
+        free(response);
 
         if(myState != END){
-            printf("No response sending frame again\n");
+            printf("\tNo response sending frame again\n");
             alarmCount++;
             emissor(fd, payload);
             start = time(NULL);
         }else if(control != c){
             state = START;
-            printf("Unexpected response sending frame again\n");
+            printf("\tUnexpected response sending frame again\n");
             alarmCount++;
             emissor(fd, payload);
             start = time(NULL);
@@ -389,11 +409,11 @@ int connect(int fd){
     unsigned char a[] = {FLAG, A, SET, A ^ SET, FLAG};
     struct array payload = {a,5};
     if(message(fd,payload,UA) == 0){
-        printf("Connection established\n");
+        printf("\tConnection established\n");
         return 0;
     }
     else{
-        printf("Connection failed\n");
+        printf("\tConnection failed\n");
         return 1;
     }
 }
@@ -407,10 +427,10 @@ int disconnect(int fd){
 
     if(message(fd,payload,DISC) == 0){
         emissor(fd,ua);
-        printf("Connection terminated\n");
+        printf("\tConnection terminated\n");
         return 0;
     }else {
-        printf("unable to terminate connection\n");
+        printf("\tunable to terminate connection\n");
         return 1;
     }
 }
@@ -419,12 +439,11 @@ int awaitConnection(int fd){
     unsigned char* buf = malloc(BUF_SIZE* sizeof(unsigned char));
     int i = 0;//garbage value
     int myState = START;
-    //doesn't send UA
     while (connected == 0){
         if(myState == START)i = 0;
         long bytes = read(fd,(void*)&buf[i],1);
         if (bytes > 0) {
-            printf("%02X\n",buf[i]);
+            printf("\t%02X",buf[i]);
             updateState(buf[i], &myState);
         }
         if(myState == END){
@@ -458,11 +477,11 @@ struct array processData(int fd, unsigned char *buf, int* i) {
         if(buf[*i] == FLAG){
             if(BCC2 == 0){
                 state = END;
-                printf("\nBCC2:%02X",BCC2);
+                printf("\n\tBCC2:%02X\n",BCC2);
                 return  (struct array){data,dataSize};
             }else{
                 state = START;
-                printf("\nBCC2:%02X",BCC2);
+                printf("\n\tBCC2:%02X\n",BCC2);
                 free(data);
                 return (struct array){NULL,0};
             }
@@ -516,6 +535,7 @@ struct array Read(int fd){
                     if (buf[i] == (c ^ A)) {
                         state = BCC_OK;
                         if(c == I1 || c == I0) {
+                            printf("\t");
                             data = processData(fd, buf, &i);
                             response = data.size > 0? getResponse(c,1):getResponse(c,0);
                         }
@@ -539,7 +559,7 @@ struct array Read(int fd){
                 default:
                     state = START;
             }
-            printf("%02Xstate:%d\n",buf[i],state);
+            printf("\t%02Xstate:%d\n",buf[i],state);
             i++;
         }
         if(i > 0)printFrame((struct array){buf,i},0);
@@ -575,11 +595,6 @@ struct array Read(int fd){
     //need review
     if(connected == 1 && data.size > 0){
         free(buf);
-        for (int j = 0; j < data.size; ++j) {
-            printf("%02x",data.content[j]);
-        }
-        printf("\n");
-
         return data;
     }
     if(connected == -1){
@@ -625,36 +640,3 @@ int Write(int fd, struct array data){
 
     return r;
 }
-
-/*
-int main(int argc, char *argv[]) {
-
-    const char *serialPortName = argv[1];
-
-    // Program usage: Uses either COM1 or COM2
-
-    if (argc != 2) {
-        printf("Incorrect program usage\n"
-               "Usage: %s <SerialPort>\n"
-               "Example: %s /dev/ttyS1\n",
-               argv[0],
-               argv[0]);
-        exit(1);
-    }else{
-        int fd = openPort(serialPortName);
-        if(connect(fd) != 0)return 1;
-        unsigned char* a = malloc(6* sizeof(unsigned char ));
-
-        a[0] = 0x01;
-        a[1] = 0x02;
-        a[2] = 0x03;
-        a[3] = 0x04;
-        a[4] = 0x05;
-        a[5] = 0x06;
-        Write(fd, (struct array) {a, 6});
-        disconnect(fd);
-        closePort(fd);
-    }
-}
-
- */

@@ -38,8 +38,11 @@ int llopen(const char* portName,int mode,const char* name,size_t size){
     int fd = openPort(portName);
     if(fd >= 0) {
         if (mode == RECEIVER ) {
-            printf("awaiting Connection\n");
+            printf("awaiting data-link Connection\n");
             int result1 = awaitConnection(fd);
+            printf("data-link connection established\n");
+            printf("---------------------------------\n");
+            printf("Awaiting Application connection\n");
 
             struct array buf = Read(fd);
             if(buf.content[0] != START)return -1;
@@ -51,7 +54,7 @@ int llopen(const char* portName,int mode,const char* name,size_t size){
                     mySize = buf.content[i];
                      i++;
                     memcpy(&fileSize, &buf.content[i], mySize);
-                    printf("%luFILE_LENGTH:%lu\n", mySize, fileSize);
+                    printf("FILE_LENGTH:%lu\n",fileSize);
                     i += mySize;
                 }else if (buf.content[i] == FILE_NAME){
                     i++;
@@ -66,18 +69,23 @@ int llopen(const char* portName,int mode,const char* name,size_t size){
                 }
             }
             if (result1 == 0){
+                printf("Aplication connection set up\n");
+                printf("-----------------------------\nn");
                 isConnected = 1;
                 return fd;
+            }else {
+                printf("Connection failed\n");
+                printf("-----------------\n");
+                return -1;
             }
-            else return -1;
         } else {
             printf("Setting up data-link connection\n");
             int result1 = connect(fd);
 
             if(result1 == 0 ) {
                 printf("data link connection set up\n");
-                printf("---------------------------\n");9
-
+                printf("---------------------------\n");
+                printf("Setting up application connection\n");
                 int name_len = min(strlen(name) + 1, BUF_SIZE - 10 - sizeof(size_t));
                 unsigned char *buf = malloc((5 + name_len) * sizeof(unsigned char) + sizeof(size_t));
                 buf[0] = START;
@@ -94,11 +102,13 @@ int llopen(const char* portName,int mode,const char* name,size_t size){
                 int result = Write(fd, (struct array) {buf, (5 + name_len) * sizeof(unsigned char) + sizeof(size_t)});
                 if(result == 0){
                     printf("Application link set up\n");
+                    printf("-----------------------\n");
                     isConnected = 1;
                     return fd;
                 }
             }
             printf("Connection failed\n");
+            printf("-----------------\n");
             return -1;
         }
     }
@@ -121,22 +131,29 @@ int llwrite(int fd,const unsigned char * buffer, int length){
     printf("Writing info into:\n");
     if(Write(fd,(struct array){frame,length+4}) == 0){
         printf("info Writen successfully\n");
+        printf("-------------------------\n");
         return 1;
     }
     printf("Error writing data\n");
+    printf("------------------\n");
     return 0;
 }
 
 size_t llread(int fd,char** buffer) {
+    printf("reading data:\n");
     struct array a = Read(fd);
     if(a.content[0] == DATA){
         *buffer = malloc(a.size-4);
         memcpy(*buffer,&a.content[4],a.size-4);
         int length = a.content[3];
         free(a.content);
+        printf("received data\n");
+        printf("---------------------------------------\n");
         return length;
     }else if(a.content[0] == END){
         isConnected = 0;
+        printf("Aplication link closed\n");
+        printf("---------------------------------------\n");
     }
     free(a.content);
     return -1;
@@ -170,7 +187,7 @@ int llclose(int fd,int mode,const char* name,size_t size) {
         disconnect(fd);
         closePort(fd);
         if(result == 0){
-            printf("Connection closed successfully\n");
+            printf("application connection closed successfully\n");
             return fd;
         }
         printf("Failed to terminate connection");
@@ -232,11 +249,9 @@ int main(int argc,char* argv[]){
         int i;
 
         while(!feof(myFile)){
-            printf("data:");
             for (i = 0; i < PACKED_SIZE && !feof(myFile); ++i) {
                 payload[i] = fgetc(myFile);
                 putc(payload[i],test);
-                printf("%02X",payload[i]);
             }
             if(feof(myFile))i--;
             printf("\n");
