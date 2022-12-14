@@ -30,7 +30,7 @@ char* getIP(const char* hostName){
     struct hostent *h;
 
     if ((h = gethostbyname(hostName)) == NULL) {
-        herror("gethostbyname()");
+        herror("unable to find the host ip address");
         exit(-1);
     }
 
@@ -73,7 +73,7 @@ void getSocket(const char* ip_address, uint16_t port){
     if (connect(sockfd,
                 (struct sockaddr *) &server_addr,
                 sizeof(server_addr)) < 0) {
-        perror("connect()");
+        perror("unable to .connect socket");
         exit(-1);
     }
 
@@ -93,15 +93,24 @@ void parceArgs(char* value) {
 
     value = &strtok(NULL,"")[2];// pass@ftp.up.pt/path
     args.name = strtok(value,":");
+    if(args.name == NULL){
+        printf("error:username not found\n");
+        exit(1);
+    }
     printf("name:%s\n",args.name);
 
     args.pass = strtok(NULL,"@");
+    if(args.pass == NULL) {
+        printf("error:password not found\n");
+    }
     printf("password:%s\n",args.pass);
 
 
     args.ip = getIP(strtok(NULL,"/"));
     args.path = strtok(NULL,"");
-
+    if(args.path == NULL){
+        printf("error:no path provided\n");
+    }
 
     printf("path:%s\n",args.path);
 }
